@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ลงเวลาทำงาน</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  body{font-family:sans-serif;margin:0;padding:20px;background:#f5f5f5;color:#222}
+  .card{background:#fff;border-radius:12px;padding:20px;max-width:420px;margin:0 auto;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+  h2{margin-top:0}
+  #clock{font-size:42px;font-weight:bold;text-align:center;margin:16px 0}
+  button{width:100%;padding:16px;font-size:18px;border:0;border-radius:10px;margin-top:12px;color:#fff}
+  .in{background:#06c755}.out{background:#e53935}.reg{background:#1e88e5}
+  button:disabled{opacity:.5}
+  input{width:100%;padding:12px;font-size:16px;margin-top:10px;box-sizing:border-box;border:1px solid #ccc;border-radius:8px}
+  #msg{margin-top:16px;padding:12px;border-radius:8px;display:none}
+  .ok{background:#e8f5e9;color:#1b5e20}.err{background:#ffebee;color:#b71c1c}
+  .muted{color:#777;font-size:14px}
+</style>
+</head>
+<body>
+<div class="card" id="app">กำลังโหลด...</div>
+
+<script>
+const LIFF_ID = '2012434591-zcYV46yf';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyjcqOgxlnAdHOSZwruWG2oZuS8f1Kt6HCgCH-dz4f0s8QJp2-_Bl92L9Kp2bnqG1iTEw/exec';
+
+const app = document.getElementById('app');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(action, data = {}) {
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action, idToken: liff.getIDToken(), ...data })
+  });
+  return res.json();
+}
+
+function showMsg(text, ok) {
+  const m = document.getElementById('msg');
+  m.textContent = text;
+  m.className = ok ? 'ok' : 'err';
+  m.style.display = 'block';
+}
+
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('อุปกรณ์นี้ไม่รองรับ GPS'));
+    navigator.geolocation.getCurrentPosition(
+      p => resolve(p.coords),
+      () => reject(new Error('อ่านตำแหน่งไม่ได้ กรุณาเปิด GPS และอนุญาตให้ LINE เข้าถึงตำแหน่ง')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+}
+
+function renderRegister() {
+  app.innerHTML = `
+    <h2>ลงทะเบียนพนักงาน</h2>
+    <p class="muted">ทำครั้งเดียว หลังจากนั้นรอ HR อนุมัติ</p>
+    <input id="empCodeInput" placeholder="รหัสพนักงาน">
+    <input id="nameInput" placeholder="ชื่อ-นามสกุล">
+    <button class="reg" id="btnReg">ลงทะเบียน</button>
+    <div id="msg"></div>`;
+  const btn = document.getElementById('btnReg');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      const r = await api('register', {
+        empCode: document.getElementById('empCodeInput').value,
+        name: document.getElementById('nameInput').value
+      });
+      showMsg(r.msg, r.ok);
+      if (!r.ok) btn.disabled = false;
+    } catch (e) {
+      showMsg('เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่', false);
+      btn.disabled = false;
+    }
+  };
+}
+
+function renderPunch(s) {
+  const todayText = s.today.length
+    ? s.today.map(t => esc(t.type) + ' ' + esc(t.time)).join(' / ')
+    : 'ยังไม่มีการลงเวลา';
+  app.innerHTML = `
+    <h2>สวัสดี ${esc(s.name)}</h2>
+    <div class="muted">รหัสพนักงาน ${esc(s.empCode)}</div>
+    <div id="clock"></div>
+    <div class="muted">วันนี้: ${todayText}</div>
+    <button class="in" id="btnIn">เข้างาน</button>
+    <button class="out" id="btnOut">ออกงาน</button>
+    <div id="msg"></div>`;
+
+  const clock = document.getElementById('clock');
+  const tick = () => clock.textContent = new Date().toLocaleTimeString('th-TH', { hour12: false });
+  tick(); setInterval(tick, 1000);
+
+  const btns = [document.getElementById('btnIn'), document.getElementById('btnOut')];
+  const punch = async (action) => {
+    btns.forEach(b => b.disabled = true);
+    showMsg('กำลังอ่านตำแหน่ง GPS...', true);
+    try {
+      const c = await getLocation();
+      showMsg('กำลังบันทึก...', true);
+      const r = await api(action, { lat: c.latitude, lng: c.longitude, accuracy: c.accuracy });
+      showMsg(r.msg, r.ok);
+    } catch (e) {
+      showMsg(e.message || 'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่', false);
+    } finally {
+      btns.forEach(b => b.disabled = false);
+    }
+  };
+  btns[0].onclick = () => punch('checkin');
+  btns[1].onclick = () => punch('checkout');
+}
+
+async function main() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+    const s = await api('status');
+    if (!s.ok) { app.textContent = s.msg; return; }
+    if (!s.registered) renderRegister();
+    else if (!s.active) app.innerHTML = '<h2>รอการอนุมัติ</h2><p>HR กำลังตรวจสอบการลงทะเบียนของคุณ</p>';
+    else renderPunch(s);
+  } catch (e) {
+    app.textContent = 'เปิดระบบไม่สำเร็จ: ' + e.message;
+  }
+}
+main();
+</script>
+</body>
+</html>
